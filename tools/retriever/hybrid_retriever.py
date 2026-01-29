@@ -1,11 +1,10 @@
-from typing import List, Dict, Tuple
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from config import config
+from typing import List, Dict
 from client.es_client import ElasticsearchClient
 from rank_bm25 import BM25Okapi
 from nltk.tokenize import word_tokenize
 import nltk
+
+from tools.processor.get_embeddings import get_embedding_func
 
 nltk.download('punkt')
 
@@ -13,7 +12,6 @@ nltk.download('punkt')
 class HybridRetriever:
     def __init__(self):
         self.es_client = ElasticsearchClient()
-        self.embedding_model = SentenceTransformer(config.EMBEDDING_MODEL)
 
     def retrieve(self, query: str, top_k: int = 5,
                  use_hybrid: bool = True) -> List[Dict]:
@@ -29,7 +27,7 @@ class HybridRetriever:
             相关文档列表
         """
         # 生成查询的embedding
-        query_vector = self.embedding_model.encode([query])[0].tolist()
+        query_vector = get_embedding_func([query])
 
         if use_hybrid:
             # 使用混合检索
