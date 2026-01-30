@@ -25,7 +25,7 @@ class ElasticsearchClient:
             # 构建连接URL
             es_url = f"{'https' if config.ES_USE_SSL else 'http'}://{config.ES_HOST}:{config.ES_PORT}"
 
-            # 9.x版本的标准连接参数
+            # 9.x版本的标准连接参数 ———— 这里需要修改成对应服务器es版本
             client_kwargs = {
                 'hosts': [es_url],
                 'request_timeout': config.ES_REQUEST_TIMEOUT,
