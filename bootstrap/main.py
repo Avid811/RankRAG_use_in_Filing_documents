@@ -73,11 +73,11 @@ def simplified_rag_test():
             print("未找到相关结果")
 
     except Exception as e:
-        print(f"❌ 检索过程中出错: {e}")
+        print(f" 检索过程中出错: {e}")
         import traceback
         traceback.print_exc()
 
-    print("\n✅ 测试完成")
+    print("\n 测试完成")
 
 
 if __name__ == "__main__":
