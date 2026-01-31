@@ -1,0 +1,12 @@
+cluster.name: "es-vector-cluster"
+network.host: 0.0.0.0
+http.port: 9200
+node.name: "es-vector-node"
+cluster.initial_master_nodes: ["es-vector-node"]
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+xpack.security.http.ssl.enabled: false
+xpack.security.transport.ssl.enabled: false
+http.cors.enabled: true
+http.cors.allow-origin: "*"
+http.cors.allow-headers: Authorization

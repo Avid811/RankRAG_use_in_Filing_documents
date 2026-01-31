@@ -4,6 +4,8 @@ from typing import List, Dict, Optional, Tuple
 import logging
 from time import time
 import ssl
+import warnings
+import urllib3
 
 from config.config import config
 
@@ -14,21 +16,23 @@ logger = logging.getLogger(__name__)
 
 class ElasticsearchClient:
     def __init__(self):
-        """初始化Elasticsearch客户端（兼容9.x版本）"""
+        """初始化Elasticsearch客户端（适配8.12.0版本）"""
         self.client = None
         self.index_name = config.ES_INDEX
         self.connect()
 
     def connect(self):
-        """连接Elasticsearch（9.x版本）"""
+        """连接Elasticsearch（简化连接参数）"""
         try:
             # 构建连接URL
             es_url = f"{'https' if config.ES_USE_SSL else 'http'}://{config.ES_HOST}:{config.ES_PORT}"
 
-            # 9.x版本的标准连接参数 ———— 这里需要修改成对应服务器es版本
+            # 简化连接参数，避免版本兼容性问题
             client_kwargs = {
                 'hosts': [es_url],
                 'request_timeout': config.ES_REQUEST_TIMEOUT,
+                'max_retries': 3,
+                'retry_on_timeout': config.ES_RETRY_ON_TIMEOUT,
             }
 
             # 如果需要认证
@@ -38,27 +42,14 @@ class ElasticsearchClient:
             # SSL配置
             if config.ES_USE_SSL:
                 if not config.ES_VERIFY_CERTS:
-                    import warnings
-                    warnings.filterwarnings("ignore")
-                    import urllib3
+                    # 禁用SSL警告
                     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
                     client_kwargs['verify_certs'] = False
+                else:
+                    client_kwargs['ca_certs'] = config.ES_CA_CERTS if hasattr(config, 'ES_CA_CERTS') else None
 
-                    # 创建不验证证书的上下文
-                    ctx = ssl.create_default_context()
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-                    client_kwargs['ssl_context'] = ctx
-
-            # 9.x版本使用这些连接选项
-            client_kwargs.update({
-                'connections_per_node': 10,
-                'retry_on_timeout': config.ES_RETRY_ON_TIMEOUT,
-            })
-
-            # 对于9.x版本，max_retries在Transport层面处理
-            # sniff_on_start和sniff_on_connection_fail在9.x中已废弃
+            # 抑制所有Elasticsearch相关的弃用警告
+            warnings.filterwarnings("ignore", category=DeprecationWarning, module="elasticsearch")
 
             self.client = Elasticsearch(**client_kwargs)
 
@@ -81,7 +72,7 @@ class ElasticsearchClient:
             self._try_simple_connection()
 
     def _try_simple_connection(self):
-        """尝试简单的连接方式（9.x版本）"""
+        """尝试简单的连接方式"""
         try:
             logger.info("尝试简单连接方式...")
             es_url = f"{'https' if config.ES_USE_SSL else 'http'}://{config.ES_HOST}:{config.ES_PORT}"
@@ -96,18 +87,11 @@ class ElasticsearchClient:
                 simple_kwargs['basic_auth'] = (config.ES_USERNAME, config.ES_PASSWORD)
 
             if config.ES_USE_SSL and not config.ES_VERIFY_CERTS:
-                import warnings
-                warnings.filterwarnings("ignore")
-                import urllib3
                 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
                 simple_kwargs['verify_certs'] = False
 
-                # 创建SSL上下文
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                simple_kwargs['ssl_context'] = ctx
+            # 抑制警告
+            warnings.filterwarnings("ignore", category=DeprecationWarning, module="elasticsearch")
 
             self.client = Elasticsearch(**simple_kwargs)
 
@@ -137,8 +121,8 @@ class ElasticsearchClient:
             logger.error(f"连接检查失败: {e}")
             return False
 
-    def create_index(self, embedding_dim: int = 384) -> bool:
-        """创建包含向量字段的索引（9.x版本）"""
+    def create_index(self, embedding_dim: int = 1024) -> bool:
+        """创建包含向量字段的索引"""
 
         if not self.check_connection():
             logger.error("Elasticsearch 连接不可用")
@@ -151,13 +135,30 @@ class ElasticsearchClient:
                 logger.info(f"索引 {self.index_name} 已存在")
                 return True
 
-            # 9.x版本的mapping语法
+            # 检查是否安装了IK分词器
+            try:
+                # 测试IK分词器是否可用
+                test_response = self.client.indices.analyze(
+                    body={
+                        "analyzer": "ik_max_word",
+                        "text": "测试"
+                    }
+                )
+                logger.info("IK分词器可用，将使用IK分词器")
+                analyzer_config = "ik_max_word"
+                search_analyzer_config = "ik_smart"
+            except Exception as e:
+                logger.warning(f"IK分词器不可用，将使用standard分词器: {e}")
+                analyzer_config = "standard"
+                search_analyzer_config = "standard"
+
+            # 索引映射
             mappings = {
                 "properties": {
                     "content": {
                         "type": "text",
-                        "analyzer": "ik_max_word",  # 使用IK分词器
-                        "search_analyzer": "ik_smart"
+                        "analyzer": analyzer_config,
+                        "search_analyzer": search_analyzer_config
                     },
                     "metadata": {
                         "type": "object",
@@ -185,12 +186,14 @@ class ElasticsearchClient:
             }
 
             settings = {
-                "number_of_shards": 1,
-                "number_of_replicas": 0,
-                "analysis": {
-                    "analyzer": {
-                        "default": {
-                            "type": "standard"
+                "index": {
+                    "number_of_shards": 1,
+                    "number_of_replicas": 0,
+                    "analysis": {
+                        "analyzer": {
+                            "default": {
+                                "type": "standard"
+                            }
                         }
                     }
                 }
@@ -199,8 +202,10 @@ class ElasticsearchClient:
             # 创建索引
             response = self.client.indices.create(
                 index=self.index_name,
-                mappings=mappings,
-                settings=settings
+                body={
+                    "mappings": mappings,
+                    "settings": settings
+                }
             )
 
             if response.get('acknowledged', False):
@@ -243,8 +248,9 @@ class ElasticsearchClient:
             logger.error(f"删除索引失败: {e}")
             return False
 
-    def index_documents(self, documents: List[Dict], batch_size: int = 100) -> Tuple[int, int]:
-        """批量索引文档"""
+    # 在 es_client.py 的 index_documents 方法中添加
+    def index_documents(self, documents, batch_size: int = 100) -> Tuple[int, int]:
+        """批量索引文档，支持 Document 对象和字典格式"""
 
         if not self.check_connection():
             logger.error("Elasticsearch 连接不可用")
@@ -256,17 +262,44 @@ class ElasticsearchClient:
 
         try:
             start_time = time()
-            total_docs = len(documents)
+            es_docs = []
+
+            # 转换文档格式
+            for i, doc in enumerate(documents):
+                if hasattr(doc, 'page_content'):  # 如果是 Document 对象
+                    es_doc = {
+                        'content': doc.page_content,
+                        'metadata': getattr(doc, 'metadata', {}),
+                        'embedding': getattr(doc, 'embedding', []),
+                        'tokens': getattr(doc, 'page_content', ''),  # 或处理分词
+                        'created_at': int(time() * 1000)
+                    }
+                elif isinstance(doc, dict):  # 如果已经是字典格式
+                    es_doc = doc.copy()
+                    if 'created_at' not in es_doc:
+                        es_doc['created_at'] = int(time() * 1000)
+                else:
+                    logger.warning(f"文档 {i} 格式不支持: {type(doc)}")
+                    continue
+
+                es_docs.append(es_doc)
+
+            if not es_docs:
+                logger.warning("没有有效的文档可以索引")
+                return 0, 0
+
+            total_docs = len(es_docs)
 
             def generate_actions():
-                for i, doc in enumerate(documents):
-                    # 确保每个文档都有时间戳
-                    if 'created_at' not in doc:
-                        doc['created_at'] = int(time() * 1000)
+                for i, doc in enumerate(es_docs):
+                    # 生成文档ID
+                    source = doc.get('metadata', {}).get('source', 'doc')
+                    chunk_index = doc.get('metadata', {}).get('chunk_index', i)
+                    doc_id = f"{source}_{chunk_index}"
 
                     action = {
                         "_index": self.index_name,
-                        "_id": f"{doc.get('metadata', {}).get('source', 'doc')}_{doc.get('chunk_index', i)}",
+                        "_id": doc_id,
                         "_source": doc
                     }
                     yield action
@@ -290,72 +323,145 @@ class ElasticsearchClient:
 
         except Exception as e:
             logger.error(f"批量索引失败: {e}")
+            import traceback
+            traceback.print_exc()
             return 0, len(documents)
 
     def hybrid_search(self, query: str, query_vector: List[float], top_k: int = 5) -> List[Dict]:
-        """混合检索：BM25 + 向量搜索（9.x版本）"""
+        """混合检索：BM25 + 向量搜索"""
 
         if not self.check_connection():
             logger.error("Elasticsearch 连接不可用")
             return []
 
         try:
-            search_body = {
-                "size": top_k,
-                "_source": ["content", "metadata", "tokens"],
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "content": {
-                                        "query": query,
-                                        "boost": config.BM25_WEIGHT
-                                    }
-                                }
-                            },
-                            {
-                                "script_score": {
-                                    "query": {"match_all": {}},
-                                    "script": {
-                                        "source": """
-                                        (1.0 + cosineSimilarity(params.query_vector, 'embedding')) / 2
-                                        """,
-                                        "params": {
-                                            "query_vector": query_vector
-                                        }
-                                    },
-                                    "boost": config.VECTOR_WEIGHT
-                                }
-                            }
-                        ],
-                        "minimum_should_match": 1
-                    }
-                }
-            }
-
-            response = self.client.search(
-                index=self.index_name,
-                body=search_body
-            )
-
-            results = []
-            for hit in response['hits']['hits']:
-                result = {
-                    'content': hit['_source']['content'],
-                    'metadata': hit['_source']['metadata'],
-                    'score': hit['_score'],
-                    'id': hit['_id'],
-                    'tokens': hit['_source'].get('tokens', '')
-                }
-                results.append(result)
-
-            logger.info(f"混合搜索完成，返回 {len(results)} 个结果")
-            return results
+            # 尝试使用KNN进行向量搜索（如果支持）
+            try:
+                return self._hybrid_search_with_knn(query, query_vector, top_k)
+            except Exception as e:
+                logger.info(f"KNN搜索失败，回退到脚本搜索: {e}")
+                return self._hybrid_search_with_script(query, query_vector, top_k)
 
         except Exception as e:
             logger.error(f"混合搜索失败: {e}")
             return []
+
+    def _hybrid_search_with_knn(self, query: str, query_vector: List[float], top_k: int = 5) -> List[Dict]:
+        """使用KNN进行混合搜索"""
+        search_body = {
+            "size": top_k,
+            "_source": ["content", "metadata", "tokens"],
+            "query": {
+                "bool": {
+                    "should": [
+                        {
+                            "match": {
+                                "content": {
+                                    "query": query,
+                                    "boost": config.BM25_WEIGHT
+                                }
+                            }
+                        }
+                    ],
+                    "minimum_should_match": 1
+                }
+            },
+            "knn": {
+                "field": "embedding",
+                "query_vector": query_vector,
+                "k": top_k * 2,
+                "num_candidates": top_k * 10,
+                "boost": config.VECTOR_WEIGHT
+            }
+        }
+
+        response = self.client.search(
+            index=self.index_name,
+            body=search_body
+        )
+
+        results = []
+        for hit in response['hits']['hits']:
+            result = {
+                'content': hit['_source']['content'],
+                'metadata': hit['_source']['metadata'],
+                'score': hit['_score'],
+                'id': hit['_id'],
+                'tokens': hit['_source'].get('tokens', '')
+            }
+            results.append(result)
+
+        logger.info(f"混合搜索(KNN)完成，返回 {len(results)} 个结果")
+        return results
+
+    def _hybrid_search_with_script(self, query: str, query_vector: List[float], top_k: int = 5) -> List[Dict]:
+        """使用脚本进行混合搜索（兼容性更好）"""
+        search_body = {
+            "size": top_k,
+            "_source": ["content", "metadata", "tokens"],
+            "query": {
+                "bool": {
+                    "should": [
+                        {
+                            "match": {
+                                "content": {
+                                    "query": query,
+                                    "boost": config.BM25_WEIGHT
+                                }
+                            }
+                        },
+                        {
+                            "script_score": {
+                                "query": {"match_all": {}},
+                                "script": {
+                                    "source": """
+                                        double dotProduct = 0.0;
+                                        double normA = 0.0;
+                                        double normB = 0.0;
+    
+                                        for (int i = 0; i < params.query_vector.length; i++) {
+                                            dotProduct += params.query_vector[i] * doc['embedding'].get(i);
+                                            normA += params.query_vector[i] * params.query_vector[i];
+                                            normB += doc['embedding'].get(i) * doc['embedding'].get(i);
+                                        }
+    
+                                        if (normA == 0 || normB == 0) {
+                                            return 0.0;
+                                        }
+    
+                                        return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+                                        """,
+                                    "params": {
+                                        "query_vector": query_vector
+                                    }
+                                },
+                                "boost": config.VECTOR_WEIGHT
+                            }
+                        }
+                    ],
+                    "minimum_should_match": 1
+                }
+            }
+        }
+
+        response = self.client.search(
+            index=self.index_name,
+            body=search_body
+        )
+
+        results = []
+        for hit in response['hits']['hits']:
+            result = {
+                'content': hit['_source']['content'],
+                'metadata': hit['_source']['metadata'],
+                'score': hit['_score'],
+                'id': hit['_id'],
+                'tokens': hit['_source'].get('tokens', '')
+            }
+            results.append(result)
+
+        logger.info(f"混合搜索(脚本)完成，返回 {len(results)} 个结果")
+        return results
 
     def pure_vector_search(self, query_vector: List[float], top_k: int = 5) -> List[Dict]:
         """纯向量搜索"""
@@ -363,40 +469,88 @@ class ElasticsearchClient:
             return []
 
         try:
-            search_body = {
-                "size": top_k,
-                "_source": ["content", "metadata"],
-                "query": {
-                    "script_score": {
-                        "query": {"match_all": {}},
-                        "script": {
-                            "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
-                            "params": {
-                                "query_vector": query_vector
+            # 先尝试KNN搜索
+            return self._knn_search(query_vector, top_k)
+        except Exception as e:
+            logger.info(f"KNN搜索失败，回退到脚本搜索: {e}")
+            return self._pure_vector_search_with_script(query_vector, top_k)
+
+    def _knn_search(self, query_vector: List[float], top_k: int = 5) -> List[Dict]:
+        """使用KNN进行向量搜索"""
+        search_body = {
+            "size": top_k,
+            "_source": ["content", "metadata"],
+            "knn": {
+                "field": "embedding",
+                "query_vector": query_vector,
+                "k": top_k * 2,
+                "num_candidates": top_k * 10
+            }
+        }
+
+        response = self.client.search(
+            index=self.index_name,
+            body=search_body
+        )
+
+        return [
+            {
+                'content': hit['_source']['content'],
+                'metadata': hit['_source']['metadata'],
+                'score': hit['_score'],
+                'id': hit['_id']
+            }
+            for hit in response['hits']['hits'][:top_k]
+        ]
+
+    def _pure_vector_search_with_script(self, query_vector: List[float], top_k: int = 5) -> List[Dict]:
+        """使用脚本进行向量搜索"""
+        search_body = {
+            "size": top_k,
+            "_source": ["content", "metadata"],
+            "query": {
+                "script_score": {
+                    "query": {"match_all": {}},
+                    "script": {
+                        "source": """
+                            double dotProduct = 0.0;
+                            double normA = 0.0;
+                            double normB = 0.0;
+    
+                            for (int i = 0; i < params.query_vector.length; i++) {
+                                dotProduct += params.query_vector[i] * doc['embedding'].get(i);
+                                normA += params.query_vector[i] * params.query_vector[i];
+                                normB += doc['embedding'].get(i) * doc['embedding'].get(i);
                             }
+    
+                            if (normA == 0 || normB == 0) {
+                                return 0.0;
+                            }
+    
+                            return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+                            """,
+                        "params": {
+                            "query_vector": query_vector
                         }
                     }
                 }
             }
+        }
 
-            response = self.client.search(
-                index=self.index_name,
-                body=search_body
-            )
+        response = self.client.search(
+            index=self.index_name,
+            body=search_body
+        )
 
-            return [
-                {
-                    'content': hit['_source']['content'],
-                    'metadata': hit['_source']['metadata'],
-                    'score': hit['_score'],
-                    'id': hit['_id']
-                }
-                for hit in response['hits']['hits']
-            ]
-
-        except Exception as e:
-            logger.error(f"向量搜索失败: {e}")
-            return []
+        return [
+            {
+                'content': hit['_source']['content'],
+                'metadata': hit['_source']['metadata'],
+                'score': hit['_score'],
+                'id': hit['_id']
+            }
+            for hit in response['hits']['hits']
+        ]
 
     def pure_bm25_search(self, query: str, top_k: int = 5) -> Dict:
         """纯BM25搜索"""
@@ -435,6 +589,9 @@ class ElasticsearchClient:
         try:
             stats = self.client.indices.stats(index=self.index_name)
             return stats
+        except exceptions.NotFoundError:
+            logger.warning(f"索引 {self.index_name} 不存在")
+            return None
         except Exception as e:
             logger.error(f"获取索引统计失败: {e}")
             return None
@@ -447,12 +604,15 @@ class ElasticsearchClient:
         try:
             count_response = self.client.count(index=self.index_name)
             return count_response.get('count', 0)
+        except exceptions.NotFoundError:
+            logger.warning(f"索引 {self.index_name} 不存在")
+            return 0
         except Exception as e:
             logger.error(f"获取文档数量失败: {e}")
             return 0
 
     def get_cluster_health(self) -> Optional[Dict]:
-        """获取集群健康状态（9.x版本）"""
+        """获取集群健康状态"""
         if not self.check_connection():
             return None
 
@@ -463,9 +623,28 @@ class ElasticsearchClient:
             logger.error(f"获取集群健康状态失败: {e}")
             return None
 
+    def create_index_if_not_exists(self, embedding_dim: int = 384) -> bool:
+        """如果索引不存在则创建索引"""
+        try:
+            if not self.check_connection():
+                return False
+
+            exists = self.client.indices.exists(index=self.index_name)
+            if not exists:
+                return self.create_index(embedding_dim)
+            else:
+                logger.info(f"索引 {self.index_name} 已存在")
+                return True
+        except Exception as e:
+            logger.error(f"检查索引存在性失败: {e}")
+            return False
+
 
 # 使用示例
 if __name__ == "__main__":
+    # 抑制所有警告
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
+
     # 测试连接
     es_client = ElasticsearchClient()
 
@@ -489,6 +668,13 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"获取信息失败: {e}")
 
+        # 创建索引
+        print("\n测试创建索引...")
+        if es_client.create_index(embedding_dim=384):
+            print("✅ 索引创建成功")
+        else:
+            print("⚠️  索引已存在或创建失败")
+
         # 获取索引统计
         count = es_client.get_document_count()
         print(f"文档数量: {count}")
@@ -497,9 +683,11 @@ if __name__ == "__main__":
         if count > 0:
             test_query = "测试"
             test_vector = [0.1] * 384
-
             results = es_client.hybrid_search(test_query, test_vector, top_k=2)
             print(f"\n测试搜索返回: {len(results)} 条结果")
+        else:
+            print("\n索引中暂无文档，无法测试搜索功能")
+
     else:
         print("=" * 60)
         print("❌ Elasticsearch 连接失败")

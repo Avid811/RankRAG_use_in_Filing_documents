@@ -6,7 +6,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     # Elasticsearch 配置
-    ES_HOST = "1.95.4.152"  # 服务器IP
+    ES_HOST = "127.0.0.1"  # 服务器IP
     ES_PORT = 9200
     ES_USERNAME = "elastic"  # 默认用户名
     ES_PASSWORD = os.getenv("ES_PASSWORD", "")  # 从环境变量读取密码
