@@ -4,7 +4,6 @@ from datetime import datetime
 from typing import List, Dict
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from nltk import word_tokenize
 import fitz  # PyMuPDF
 from docx import Document
 
@@ -153,8 +152,7 @@ class DocumentProcessor:
             doc = {
                 'content': chunk,
                 'metadata': metadata or {},
-                'chunk_index': i + 1,
-                'tokens': ' '.join(word_tokenize(chunk))
+                'chunk_index': i + 1
             }
             documents.append(doc)
 
@@ -261,7 +259,6 @@ class DocumentProcessor:
                 'content': doc['content'],
                 'metadata': doc['metadata'],
                 'chunk_index': doc['chunk_index'],
-                'tokens': doc['tokens'],
                 'has_embedding': 'embedding' in doc and bool(doc['embedding'])
             }
             if 'embedding' in doc and doc['embedding']:

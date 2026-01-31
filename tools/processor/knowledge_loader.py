@@ -76,41 +76,41 @@ class KnowledgeBaseLoader:
 
         # 检查路径
         if not os.path.exists(data_path):
-            print(f"❌ 路径不存在: {data_path}")
+            print(f"路径不存在: {data_path}")
             return False
 
         # 检查连接
         if not self.es_client.check_connection():
-            print("❌ Elasticsearch 连接失败")
+            print("Elasticsearch 连接失败")
             return False
 
         # 处理索引
         if recreate_index:
-            print("🗑️ 删除旧索引...")
+            print("删除旧索引...")
             self.es_client.delete_index()
 
-        print("📁 创建/检查索引...")
+        print("创建/检查索引...")
         if not self.es_client.create_index(embedding_dim=1024):
-            print("❌ 索引创建失败")
+            print("索引创建失败")
             return False
 
         # 加载文档
-        print("\n📂 加载文档...")
+        print("\n加载文档...")
         if os.path.isfile(data_path):
-            print(f"📄 从文件加载: {os.path.basename(data_path)}")
+            print(f"从文件加载: {os.path.basename(data_path)}")
         else:
-            print(f"📁 从目录加载: {data_path}")
+            print(f"从目录加载: {data_path}")
 
         documents = self.load_from_directory(data_path)
 
         if not documents:
-            print("⚠️ 没有找到任何文档")
+            print("没有找到任何文档")
             return False
 
-        print(f"✅ 共处理 {len(documents)} 个文档chunks")
+        print(f"共处理 {len(documents)} 个文档chunks")
 
-        # 转换格式 - 修复这里！
-        print("🔄 转换文档格式...")
+        # 转换格式，把基于langchain工具切分的 chunks 转换成 es可以存储的分块
+        print("转换文档格式...")
         es_documents = []
 
         for i, doc in enumerate(documents):
@@ -132,30 +132,14 @@ class KnowledgeBaseLoader:
                     import random
                     embedding = [random.random() for _ in range(1024)]
 
-                # 获取tokens
-                tokens = doc.get('tokens', '')
-
-            elif hasattr(doc, 'page_content'):
-                # LangChain Document格式
-                content = doc.page_content
-                metadata = getattr(doc, 'metadata', {}).copy()
-                metadata['chunk_index'] = i
-
-                embedding = getattr(doc, 'embedding', None)
-                if embedding is None:
-                    import random
-                    embedding = [random.random() for _ in range(1024)]
-
-                tokens = content
             else:
-                print(f"⚠️ 跳过不支持格式的文档: {type(doc)}")
+                print(f"跳过不支持格式的文档: {type(doc)}")
                 continue
 
             es_doc = {
                 'content': content,
                 'metadata': metadata,
                 'embedding': embedding,
-                'tokens': tokens,
                 'created_at': int(time.time() * 1000)
             }
             es_documents.append(es_doc)
@@ -165,11 +149,11 @@ class KnowledgeBaseLoader:
                 print(f"  → 已转换 {i + 1}/{len(documents)} 个文档")
 
         if not es_documents:
-            print("⚠️ 转换后没有可用的文档")
+            print("转换后没有可用的文档")
             return False
 
         # 索引到ES
-        print(f"\n📤 正在索引 {len(es_documents)} 个文档到ES...")
+        print(f"\n正在索引 {len(es_documents)} 个文档到ES...")
         start_time = time.time()
 
         success, failed = self.es_client.index_documents(es_documents)

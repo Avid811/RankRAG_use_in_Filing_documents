@@ -132,10 +132,6 @@ class ElasticsearchClient:
                         "index": True,
                         "similarity": "cosine"
                     },
-                    "tokens": {
-                        "type": "text",
-                        "analyzer": "standard"
-                    },
                     "created_at": {
                         "type": "date",
                         "format": "strict_date_optional_time||epoch_millis"
@@ -218,15 +214,7 @@ class ElasticsearchClient:
             es_docs = []
 
             for i, doc in enumerate(documents):
-                if hasattr(doc, 'page_content'):
-                    es_doc = {
-                        'content': doc.page_content,
-                        'metadata': getattr(doc, 'metadata', {}),
-                        'embedding': getattr(doc, 'embedding', []),
-                        'tokens': getattr(doc, 'page_content', ''),
-                        'created_at': int(time() * 1000)
-                    }
-                elif isinstance(doc, dict):
+                if isinstance(doc, dict):
                     es_doc = doc.copy()
                     if 'created_at' not in es_doc:
                         es_doc['created_at'] = int(time() * 1000)
@@ -307,7 +295,7 @@ class ElasticsearchClient:
 
         search_body = {
             "size": top_k,
-            "_source": ["content", "metadata", "tokens"],
+            "_source": ["content", "metadata"],
             "query": {
                 "bool": {
                     "should": [
@@ -353,8 +341,7 @@ class ElasticsearchClient:
                 'content': hit['_source']['content'],
                 'metadata': hit['_source']['metadata'],
                 'score': hit['_score'],
-                'id': hit['_id'],
-                'tokens': hit['_source'].get('tokens', '')
+                'id': hit['_id']
             }
 
             # 如果启用了详细得分，计算并显示各个部分
@@ -515,6 +502,7 @@ class ElasticsearchClient:
                 }
             )
 
+            # 这里是调用了es的API看分词结果是什么
             tokens = [token.get('token', '') for token in response.get('tokens', [])]
             return tokens
         except Exception as e:
@@ -569,8 +557,7 @@ class ElasticsearchClient:
                     'metadata': result.get('metadata', {}),
                     'bm25_score': bm25_info.get('bm25_score', 0.0),
                     'vector_score': vector_info.get('vector_score', 0.0),
-                    'hybrid_score': result.get('score', 0.0),
-                    'tokens': result.get('tokens', '')
+                    'hybrid_score': result.get('score', 0.0)
                 }
                 detailed_results.append(detailed_result)
 
