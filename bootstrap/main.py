@@ -5,7 +5,6 @@ from tools.retriever.hybrid_retriever import HybridRetriever
 
 def simplified_rag_test():
     """简化版RAG测试：入库一次，然后执行混合检索"""
-
     print("=" * 50)
     print("RAG知识库简化测试")
     print("=" * 50)
@@ -42,9 +41,9 @@ def simplified_rag_test():
     loader.initialize_knowledge_base(data_dir)
     print("✅ 知识库初始化完成")
 
-    # 2. 混合检索测试
+    # 2. 详细混合检索测试
     print("\n" + "=" * 50)
-    print("2. 执行混合检索测试...")
+    print("2. 执行详细混合检索测试...")
     print("=" * 50)
 
     query = "网络暴力"
@@ -52,12 +51,24 @@ def simplified_rag_test():
     print("-" * 30)
 
     try:
-        # 执行混合检索
-        results = retriever.retrieve(query, top_k=3, use_hybrid=True)
+        # 执行详细混合检索
+        detailed_results = retriever.retrieve_with_detailed_scores(query, top_k=3)
 
-        if results:
-            print("\n混合检索结果:")
-            print(retriever.format_results(results))
+        if detailed_results and detailed_results.get('detailed_results'):
+            print("\n详细检索结果:")
+            print(retriever.format_detailed_results(detailed_results))
+
+            # 额外的分析
+            print("\n" + "=" * 50)
+            print("检索结果分析:")
+            print("=" * 50)
+
+            for i, result in enumerate(detailed_results['detailed_results'], 1):
+                print(f"\n文档 {i} 分析:")
+                print(f"BM25贡献: {result.get('weighted_bm25', 0):.4f}")
+                print(f"向量贡献: {result.get('weighted_vector', 0):.4f}")
+                print(f"总和: {result.get('weighted_sum', 0):.4f}")
+                print(f"ES评分: {result.get('es_final_score', 0):.4f}")
         else:
             print("未找到相关结果")
 
