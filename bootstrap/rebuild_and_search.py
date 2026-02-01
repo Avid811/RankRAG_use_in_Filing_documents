@@ -18,35 +18,35 @@ def simplified_rag_test():
     data_dir = "/Users/aono/Desktop/RankRAG/RankRAG_use_in_Filing_documents/data/knowledge.txt"
 
     if not os.path.exists(data_dir):
-        print(f"❌ 数据文件不存在: {data_dir}")
+        print(f"数据文件不存在: {data_dir}")
         return
 
     # 删除旧索引
     print("正在删除旧索引...")
     if retriever.es_client.delete_index():
-        print("✅ 旧索引已删除")
+        print("旧索引已删除")
     else:
-        print("⚠️  删除旧索引失败或索引不存在")
+        print("删除旧索引失败或索引不存在")
 
     # 创建新索引
     print("正在创建新索引（1024维度）...")
     if retriever.es_client.create_index(embedding_dim=1024):
-        print("✅ 新索引创建成功")
+        print("新索引创建成功")
     else:
-        print("❌ 索引创建失败")
+        print("索引创建失败")
         return
 
     # 加载知识库
     print("正在加载知识库...")
     loader.initialize_knowledge_base(data_dir)
-    print("✅ 知识库初始化完成")
+    print("知识库初始化完成")
 
     # 2. 详细混合检索测试
     print("\n" + "=" * 50)
     print("2. 执行详细混合检索测试...")
     print("=" * 50)
 
-    query = "网络暴力"
+    query = "我们可能会推送一些含有'血腥'、'暴力'的内容，用户可以选择不感兴趣"
     print(f"查询: {query}")
     print("-" * 30)
 

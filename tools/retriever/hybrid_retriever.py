@@ -122,9 +122,13 @@ class HybridRetriever:
 
             # 显示各个得分
             formatted.append(f"BM25原始得分: {result.get('bm25_score', 0):.4f}")
+            formatted.append(f"BM25归一化得分: {result.get('bm25_score_normalized', 0):.4f}")  # 新增
             formatted.append(f"向量相似度得分: {result.get('vector_score', 0):.4f}")
+
+            # 使用归一化后的BM25得分显示计算公式
             formatted.append(
-                f"BM25加权得分: {result.get('bm25_score', 0):.4f} × {result.get('bm25_weight', 0.5):.2f} = {result.get('weighted_bm25', 0):.4f}")
+                f"BM25加权得分: {result.get('bm25_score_normalized', 0):.4f} × {result.get('bm25_weight', 0.5):.2f} = {result.get('weighted_bm25', 0):.4f}")
+
             formatted.append(
                 f"向量加权得分: {result.get('vector_score', 0):.4f} × {result.get('vector_weight', 0.5):.2f} = {result.get('weighted_vector', 0):.4f}")
             formatted.append(f"加权和: {result.get('weighted_sum', 0):.4f}")
@@ -134,7 +138,7 @@ class HybridRetriever:
             metadata = result.get('metadata', {})
             source = metadata.get('source', '未知')
             page = metadata.get('page', '未知')
-            chunk_id = metadata.get('chunk_id', '未知')
+            chunk_id = metadata.get('id', '未知')
             formatted.append(f"来源: {source} (页{page}, 块{chunk_id})")
 
             # 内容预览
@@ -160,53 +164,61 @@ class HybridRetriever:
             embeddings = get_embedding_func([query])
 
             if not embeddings or len(embeddings) == 0:
-                print("⚠️ 无法生成向量，将使用全零向量")
+                print("无法生成向量，将使用全零向量")
                 query_vector = [0.0] * self.embedding_dim
             else:
                 query_vector = embeddings[0] if isinstance(embeddings, list) else embeddings
                 if hasattr(query_vector, 'tolist'):
                     query_vector = query_vector.tolist()
                 elif not isinstance(query_vector, list):
-                    print(f"⚠️ 向量格式异常: {type(query_vector)}，将使用全零向量")
+                    print(f"向量格式异常: {type(query_vector)}，将使用全零向量")
                     query_vector = [0.0] * self.embedding_dim
 
                 # 确保维度正确
                 actual_dim = len(query_vector)
                 if actual_dim != self.embedding_dim:
-                    print(f"⚠️ 向量维度不正确: {actual_dim}，期望{self.embedding_dim}")
+                    print(f"向量维度不正确: {actual_dim}，期望{self.embedding_dim}")
                     if actual_dim > self.embedding_dim:
                         query_vector = query_vector[:self.embedding_dim]
                     else:
                         query_vector = query_vector + [0.0] * (self.embedding_dim - actual_dim)
 
-            print(f"✅ 向量生成成功，维度: {len(query_vector)}")
+            print(f"向量生成成功，维度: {len(query_vector)}")
 
         except Exception as e:
-            print(f"❌ 生成向量时出错: {e}")
+            print(f"生成向量时出错: {e}")
             traceback.print_exc()
             query_vector = [0.0] * self.embedding_dim
 
         # 使用新的方法获取详细得分
-        print("🔍 执行混合检索（带详细得分）...")
+        print("执行混合检索（带具体得分）...")
         detailed_scores = self.es_client.get_separate_scores(query, query_vector, top_k)
 
         # 计算加权得分
         hybrid_results = detailed_scores.get('hybrid_results', [])
 
+        # 找到BM25得分的最大值用于归一化
+        bm25_scores = [result.get('bm25_score', 0.0) for result in hybrid_results]
+        max_bm25 = max(bm25_scores) if bm25_scores else 1.0
+
         for result in hybrid_results:
             bm25_score = result.get('bm25_score', 0.0)
             vector_score = result.get('vector_score', 0.0)
+
+            # 归一化BM25得分
+            normalized_bm25 = bm25_score / max_bm25 if max_bm25 > 0 else 0.0
 
             # 从配置获取权重
             bm25_weight = getattr(config, 'BM25_WEIGHT', 0.5)
             vector_weight = getattr(config, 'VECTOR_WEIGHT', 0.5)
 
-            # 计算加权得分
-            weighted_bm25 = bm25_score * bm25_weight
+            # 使用归一化后的BM25得分计算加权得分
+            weighted_bm25 = normalized_bm25 * bm25_weight
             weighted_vector = vector_score * vector_weight
 
             result['bm25_weight'] = bm25_weight
             result['vector_weight'] = vector_weight
+            result['bm25_score_normalized'] = normalized_bm25
             result['weighted_bm25'] = weighted_bm25
             result['weighted_vector'] = weighted_vector
             result['weighted_sum'] = weighted_bm25 + weighted_vector

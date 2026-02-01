@@ -100,6 +100,20 @@ class ElasticsearchClient:
             logger.error(f"连接检查失败: {e}")
             return False
 
+
+
+    def index_exists(self) -> bool:
+        """检查索引是否存在"""
+        if not self.check_connection():
+            logger.error("Elasticsearch 连接不可用")
+            return False
+
+        try:
+            return self.client.indices.exists(index=self.index_name)
+        except Exception as e:
+            logger.error(f"检查索引存在性失败: {e}")
+            return False
+
     def create_index(self, embedding_dim: int = 1024) -> bool:
         if not self.check_connection():
             logger.error("Elasticsearch 连接不可用")
@@ -518,19 +532,67 @@ class ElasticsearchClient:
             return {"hybrid_results": [], "bm25_scores": {}, "vector_scores": {}}
 
         try:
-            # 1. 执行BM25搜索
-            bm25_response = self.pure_bm25_search(query, top_k=top_k * 3)
-            bm25_scores = {}
+            # 1. 执行更宽松的BM25搜索（不要求所有词都匹配）
+            search_body = {
+                "size": top_k * 5,  # 获取更多结果，确保有足够匹配
+                "_source": ["content", "metadata"],
+                "query": {
+                    "match": {
+                        "content": {
+                            "query": query,
+                            "operator": "or",  # 改为or操作，匹配任意一个词
+                            "minimum_should_match": "1"  # 至少匹配一个词
+                        }
+                    }
+                }
+            }
 
-            for hit in bm25_response.get('hits', {}).get('hits', []):
+            try:
+                response = self.client.search(
+                    index=self.index_name,
+                    body=search_body
+                )
+            except Exception as e:
+                logger.error(f"BM25搜索失败: {e}")
+                response = {'hits': {'hits': [], 'total': {'value': 0}}}
+
+            bm25_scores = {}
+            for hit in response.get('hits', {}).get('hits', []):
                 bm25_scores[hit['_id']] = {
                     'bm25_score': hit['_score'],
                     'content': hit['_source']['content'],
                     'metadata': hit['_source'].get('metadata', {})
                 }
 
+            # 如果没有BM25结果，尝试更宽松的匹配
+            if not bm25_scores:
+                logger.warning(f"BM25搜索无结果，查询: {query}")
+
+                # 尝试移除标点符号和特殊字符
+                import re
+                clean_query = re.sub(r'[^\w\s\u4e00-\u9fff]', ' ', query)
+                clean_query = ' '.join(clean_query.split())
+
+                if clean_query and clean_query != query:
+                    logger.info(f"尝试清理后的查询: {clean_query}")
+                    search_body['query']['match']['content']['query'] = clean_query
+                    try:
+                        response = self.client.search(
+                            index=self.index_name,
+                            body=search_body
+                        )
+                    except Exception as e:
+                        logger.error(f"清理后BM25搜索失败: {e}")
+                    else:
+                        for hit in response.get('hits', {}).get('hits', []):
+                            bm25_scores[hit['_id']] = {
+                                'bm25_score': hit['_score'],
+                                'content': hit['_source']['content'],
+                                'metadata': hit['_source'].get('metadata', {})
+                            }
+
             # 2. 执行向量搜索
-            vector_results = self.pure_vector_search(query_vector, top_k=top_k * 3)
+            vector_results = self.pure_vector_search(query_vector, top_k=top_k * 5)
             vector_scores = {}
 
             for result in vector_results:
@@ -569,4 +631,54 @@ class ElasticsearchClient:
 
         except Exception as e:
             logger.error(f"获取详细搜索得分失败: {e}")
+            import traceback
+            traceback.print_exc()
             return {"hybrid_results": [], "bm25_scores": {}, "vector_scores": {}}
+
+    def improved_bm25_search(self, query: str, top_k: int = 5, operator: str = "or",
+                             minimum_should_match: str = "1") -> Dict:
+        """
+        改进的BM25搜索，支持配置匹配条件
+
+        Args:
+            query: 查询文本
+            top_k: 返回结果数量
+            operator: 匹配操作符，"and"或"or"
+            minimum_should_match: 最少匹配词数
+        """
+        if not self.check_connection():
+            return {'hits': {'hits': [], 'total': {'value': 0}}}
+
+        try:
+            search_body = {
+                "size": top_k,
+                "_source": ["content", "metadata"],
+                "query": {
+                    "match": {
+                        "content": {
+                            "query": query,
+                            "operator": operator,
+                            "minimum_should_match": minimum_should_match
+                        }
+                    }
+                }
+            }
+
+            response = self.client.search(
+                index=self.index_name,
+                body=search_body
+            )
+
+            # 记录搜索统计
+            total = response.get('hits', {}).get('total', {}).get('value', 0)
+            logger.info(f"BM25搜索: 查询='{query}', 匹配到{total}个文档")
+
+            if total > 0:
+                for i, hit in enumerate(response['hits']['hits'][:3]):  # 只显示前3个
+                    logger.info(f"  BM25结果{i + 1}: ID={hit['_id']}, 得分={hit['_score']:.4f}")
+
+            return response
+
+        except Exception as e:
+            logger.error(f"BM25搜索失败: {e}")
+            return {'hits': {'hits': [], 'total': {'value': 0}}}
