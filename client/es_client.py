@@ -100,8 +100,6 @@ class ElasticsearchClient:
             logger.error(f"连接检查失败: {e}")
             return False
 
-
-
     def index_exists(self) -> bool:
         """检查索引是否存在"""
         if not self.check_connection():
@@ -125,6 +123,7 @@ class ElasticsearchClient:
                 logger.info(f"索引 {self.index_name} 已存在")
                 return True
 
+            # 【修改点 1】：更新 mapping 以适应新的数据结构
             mappings = {
                 "properties": {
                     "content": {
@@ -132,12 +131,20 @@ class ElasticsearchClient:
                         "analyzer": "ik_max_word",
                         "search_analyzer": "ik_smart"
                     },
+                    "chunkId": {
+                        "type": "keyword"
+                    },
                     "metadata": {
                         "type": "object",
                         "properties": {
                             "source": {"type": "keyword"},
-                            "page": {"type": "integer"},
-                            "chunk_id": {"type": "integer"}
+                            "takeEffect": {"type": "keyword"},
+                            "lawType": {"type": "keyword"},
+                            "whoMake": {"type": "keyword"},
+                            "status": {"type": "keyword"},
+                            "chapter": {"type": "keyword"},
+                            "section": {"type": "keyword"},
+                            "articleNumber": {"type": "keyword"}
                         }
                     },
                     "embedding": {
@@ -246,9 +253,12 @@ class ElasticsearchClient:
 
             def generate_actions():
                 for i, doc in enumerate(es_docs):
-                    source = doc.get('metadata', {}).get('source', 'doc')
-                    chunk_index = doc.get('metadata', {}).get('chunk_index', i)
-                    doc_id = f"{source}_{chunk_index}"
+                    # 【修改点 2】：适应新的 chunkId 位置和元数据来源
+                    source = doc.get('metadata', {}).get('source', 'unknown_source')
+                    chunk_id = doc.get('chunkId', str(i))
+
+                    # 为了保证 _id 的唯一性和可读性
+                    doc_id = f"{source}_chunk_{chunk_id}"
 
                     action = {
                         "_index": self.index_name,
@@ -280,15 +290,6 @@ class ElasticsearchClient:
 
     def hybrid_search(self, query: str, query_vector: List[float], top_k: int = 5,
                       return_raw_scores: bool = False) -> List[Dict]:
-        """
-        混合搜索：结合BM25和向量搜索
-
-        Args:
-            query: 查询文本
-            query_vector: 查询向量
-            top_k: 返回结果数量
-            return_raw_scores: 是否返回原始BM25和向量得分
-        """
         if not self.check_connection():
             logger.error("Elasticsearch 连接不可用")
             return []
@@ -301,15 +302,12 @@ class ElasticsearchClient:
 
     def _hybrid_search_with_knn(self, query: str, query_vector: List[float],
                                 top_k: int = 5, return_raw_scores: bool = False) -> List[Dict]:
-        """
-        使用KNN进行混合搜索，并计算详细的得分
-        """
-        # 计算搜索的文档数量
         num_candidates = top_k * 10
 
         search_body = {
             "size": top_k,
-            "_source": ["content", "metadata"],
+            # 【修改点 3】：在 _source 中增加 chunkId 返回
+            "_source": ["content", "metadata", "chunkId"],
             "query": {
                 "bool": {
                     "should": [
@@ -334,7 +332,6 @@ class ElasticsearchClient:
             }
         }
 
-        # 添加script_score来显示详细得分
         if return_raw_scores:
             search_body["ext"] = {
                 "knn": {
@@ -353,19 +350,17 @@ class ElasticsearchClient:
         for hit in response['hits']['hits']:
             result = {
                 'content': hit['_source']['content'],
-                'metadata': hit['_source']['metadata'],
+                'metadata': hit['_source'].get('metadata', {}),
+                'chunkId': hit['_source'].get('chunkId', ''),  # 提取 chunkId
                 'score': hit['_score'],
                 'id': hit['_id']
             }
 
-            # 如果启用了详细得分，计算并显示各个部分
             if return_raw_scores and hit.get('_score') is not None:
-                # 计算各个得分部分
                 bm25_score = 0.0
                 vector_score = 0.0
                 final_score = hit['_score']
 
-                # 从解释中获取更多信息
                 if 'matched_queries' in hit:
                     result['matched_queries'] = hit['matched_queries']
 
@@ -385,7 +380,6 @@ class ElasticsearchClient:
     def pure_vector_search(self, query_vector: List[float], top_k: int = 5) -> List[Dict]:
         if not self.check_connection():
             return []
-
         try:
             return self._knn_search(query_vector, top_k)
         except Exception as e:
@@ -395,7 +389,7 @@ class ElasticsearchClient:
     def _knn_search(self, query_vector: List[float], top_k: int = 5) -> List[Dict]:
         search_body = {
             "size": top_k,
-            "_source": ["content", "metadata"],
+            "_source": ["content", "metadata", "chunkId"],  # 加入 chunkId
             "knn": {
                 "field": "embedding",
                 "query_vector": query_vector,
@@ -412,7 +406,8 @@ class ElasticsearchClient:
         return [
             {
                 'content': hit['_source']['content'],
-                'metadata': hit['_source']['metadata'],
+                'metadata': hit['_source'].get('metadata', {}),
+                'chunkId': hit['_source'].get('chunkId', ''),
                 'score': hit['_score'],
                 'id': hit['_id']
             }
@@ -426,7 +421,7 @@ class ElasticsearchClient:
         try:
             search_body = {
                 "size": top_k,
-                "_source": ["content", "metadata"],
+                "_source": ["content", "metadata", "chunkId"],  # 加入 chunkId
                 "query": {
                     "match": {
                         "content": {
@@ -436,13 +431,11 @@ class ElasticsearchClient:
                     }
                 }
             }
-
             response = self.client.search(
                 index=self.index_name,
                 body=search_body
             )
             return response
-
         except Exception as e:
             logger.error(f"BM25搜索失败: {e}")
             return {'hits': {'hits': [], 'total': {'value': 0}}}
@@ -450,7 +443,6 @@ class ElasticsearchClient:
     def get_index_stats(self) -> Optional[Dict]:
         if not self.check_connection():
             return None
-
         try:
             stats = self.client.indices.stats(index=self.index_name)
             return stats
@@ -464,7 +456,6 @@ class ElasticsearchClient:
     def get_document_count(self) -> int:
         if not self.check_connection():
             return 0
-
         try:
             count_response = self.client.count(index=self.index_name)
             return count_response.get('count', 0)
@@ -478,7 +469,6 @@ class ElasticsearchClient:
     def get_cluster_health(self) -> Optional[Dict]:
         if not self.check_connection():
             return None
-
         try:
             health = self.client.cluster.health()
             return health
@@ -486,7 +476,7 @@ class ElasticsearchClient:
             logger.error(f"获取集群健康状态失败: {e}")
             return None
 
-    def create_index_if_not_exists(self, embedding_dim: int = 384) -> bool:
+    def create_index_if_not_exists(self, embedding_dim: int = 1024) -> bool:
         try:
             if not self.check_connection():
                 return False
@@ -501,13 +491,9 @@ class ElasticsearchClient:
             logger.error(f"检查索引存在性失败: {e}")
             return False
 
-    # client/es_client.py 中 ElasticsearchClient 类添加以下方法
-
     def analyze_text(self, text: str, analyzer: str = "ik_smart") -> List[str]:
-        """分析文本的分词情况"""
         if not self.check_connection():
             return []
-
         try:
             response = self.client.indices.analyze(
                 body={
@@ -515,8 +501,6 @@ class ElasticsearchClient:
                     "text": text
                 }
             )
-
-            # 这里是调用了es的API看分词结果是什么
             tokens = [token.get('token', '') for token in response.get('tokens', [])]
             return tokens
         except Exception as e:
@@ -524,24 +508,19 @@ class ElasticsearchClient:
             return []
 
     def get_separate_scores(self, query: str, query_vector: List[float], top_k: int = 5) -> Dict:
-        """
-        分别获取BM25和向量搜索的得分
-        返回包含详细得分信息的结果
-        """
         if not self.check_connection():
             return {"hybrid_results": [], "bm25_scores": {}, "vector_scores": {}}
 
         try:
-            # 1. 执行更宽松的BM25搜索（不要求所有词都匹配）
             search_body = {
-                "size": top_k * 5,  # 获取更多结果，确保有足够匹配
-                "_source": ["content", "metadata"],
+                "size": top_k * 5,
+                "_source": ["content", "metadata", "chunkId"],  # 加入 chunkId
                 "query": {
                     "match": {
                         "content": {
                             "query": query,
-                            "operator": "or",  # 改为or操作，匹配任意一个词
-                            "minimum_should_match": "1"  # 至少匹配一个词
+                            "operator": "or",
+                            "minimum_should_match": "1"
                         }
                     }
                 }
@@ -561,20 +540,16 @@ class ElasticsearchClient:
                 bm25_scores[hit['_id']] = {
                     'bm25_score': hit['_score'],
                     'content': hit['_source']['content'],
-                    'metadata': hit['_source'].get('metadata', {})
+                    'metadata': hit['_source'].get('metadata', {}),
+                    'chunkId': hit['_source'].get('chunkId', '')
                 }
 
-            # 如果没有BM25结果，尝试更宽松的匹配
             if not bm25_scores:
-                logger.warning(f"BM25搜索无结果，查询: {query}")
-
-                # 尝试移除标点符号和特殊字符
                 import re
                 clean_query = re.sub(r'[^\w\s\u4e00-\u9fff]', ' ', query)
                 clean_query = ' '.join(clean_query.split())
 
                 if clean_query and clean_query != query:
-                    logger.info(f"尝试清理后的查询: {clean_query}")
                     search_body['query']['match']['content']['query'] = clean_query
                     try:
                         response = self.client.search(
@@ -588,10 +563,10 @@ class ElasticsearchClient:
                             bm25_scores[hit['_id']] = {
                                 'bm25_score': hit['_score'],
                                 'content': hit['_source']['content'],
-                                'metadata': hit['_source'].get('metadata', {})
+                                'metadata': hit['_source'].get('metadata', {}),
+                                'chunkId': hit['_source'].get('chunkId', '')
                             }
 
-            # 2. 执行向量搜索
             vector_results = self.pure_vector_search(query_vector, top_k=top_k * 5)
             vector_scores = {}
 
@@ -599,17 +574,15 @@ class ElasticsearchClient:
                 vector_scores[result['id']] = {
                     'vector_score': result['score'],
                     'content': result['content'],
-                    'metadata': result.get('metadata', {})
+                    'metadata': result.get('metadata', {}),
+                    'chunkId': result.get('chunkId', '')
                 }
 
-            # 3. 执行混合搜索
             hybrid_results = self.hybrid_search(query, query_vector, top_k)
 
-            # 4. 合并得分信息
             detailed_results = []
             for result in hybrid_results:
                 doc_id = result['id']
-
                 bm25_info = bm25_scores.get(doc_id, {'bm25_score': 0.0})
                 vector_info = vector_scores.get(doc_id, {'vector_score': 0.0})
 
@@ -617,6 +590,7 @@ class ElasticsearchClient:
                     'id': doc_id,
                     'content': result['content'],
                     'metadata': result.get('metadata', {}),
+                    'chunkId': result.get('chunkId', ''),
                     'bm25_score': bm25_info.get('bm25_score', 0.0),
                     'vector_score': vector_info.get('vector_score', 0.0),
                     'hybrid_score': result.get('score', 0.0)
@@ -637,22 +611,13 @@ class ElasticsearchClient:
 
     def improved_bm25_search(self, query: str, top_k: int = 5, operator: str = "or",
                              minimum_should_match: str = "1") -> Dict:
-        """
-        改进的BM25搜索，支持配置匹配条件
-
-        Args:
-            query: 查询文本
-            top_k: 返回结果数量
-            operator: 匹配操作符，"and"或"or"
-            minimum_should_match: 最少匹配词数
-        """
         if not self.check_connection():
             return {'hits': {'hits': [], 'total': {'value': 0}}}
 
         try:
             search_body = {
                 "size": top_k,
-                "_source": ["content", "metadata"],
+                "_source": ["content", "metadata", "chunkId"],  # 加入 chunkId
                 "query": {
                     "match": {
                         "content": {
@@ -669,13 +634,8 @@ class ElasticsearchClient:
                 body=search_body
             )
 
-            # 记录搜索统计
             total = response.get('hits', {}).get('total', {}).get('value', 0)
             logger.info(f"BM25搜索: 查询='{query}', 匹配到{total}个文档")
-
-            if total > 0:
-                for i, hit in enumerate(response['hits']['hits'][:3]):  # 只显示前3个
-                    logger.info(f"  BM25结果{i + 1}: ID={hit['_id']}, 得分={hit['_score']:.4f}")
 
             return response
 

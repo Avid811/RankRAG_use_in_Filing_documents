@@ -158,7 +158,7 @@ class HybridRetriever:
         Returns:
             包含详细得分信息的字典
         """
-        # 生成查询的embedding
+        # ==================== 1. 向量生成部分 (保持原样不变) ====================
         try:
             print("正在生成向量...")
             embeddings = get_embedding_func([query])
@@ -174,7 +174,6 @@ class HybridRetriever:
                     print(f"向量格式异常: {type(query_vector)}，将使用全零向量")
                     query_vector = [0.0] * self.embedding_dim
 
-                # 确保维度正确
                 actual_dim = len(query_vector)
                 if actual_dim != self.embedding_dim:
                     print(f"向量维度不正确: {actual_dim}，期望{self.embedding_dim}")
@@ -190,50 +189,60 @@ class HybridRetriever:
             traceback.print_exc()
             query_vector = [0.0] * self.embedding_dim
 
-        # 使用新的方法获取详细得分
-        print("执行混合检索（带具体得分）...")
-        detailed_scores = self.es_client.get_separate_scores(query, query_vector, top_k)
+        # ==================== 2. 核心修复：获取更大的候选池 ====================
+        # 必须放大召回数量 (例如 top_k 的 5 倍)，防止好文档在第一轮被 ES 错误的算分机制淘汰
+        recall_size = top_k * 5
+        print(f"执行混合检索（从底层捞取 {recall_size} 个候选文档进行精准打分重排）...")
 
-        # 计算加权得分
+        # 这里的 top_k 参数传入放大后的 recall_size
+        detailed_scores = self.es_client.get_separate_scores(query, query_vector, top_k=recall_size)
         hybrid_results = detailed_scores.get('hybrid_results', [])
 
-        # 找到BM25得分的最大值用于归一化
+        # 找到这批候选里 BM25 的最高分，用于计算归一化
         bm25_scores = [result.get('bm25_score', 0.0) for result in hybrid_results]
-        max_bm25 = max(bm25_scores) if bm25_scores else 1.0
+        max_bm25 = max(bm25_scores) if bm25_scores and max(bm25_scores) > 0 else 1.0
 
+        bm25_weight = getattr(config, 'BM25_WEIGHT', 0.4)
+        vector_weight = getattr(config, 'VECTOR_WEIGHT', 0.6)
+
+        # ==================== 3. 核心修复：重新算分并覆盖旧分数 ====================
         for result in hybrid_results:
             bm25_score = result.get('bm25_score', 0.0)
             vector_score = result.get('vector_score', 0.0)
 
-            # 归一化BM25得分
-            normalized_bm25 = bm25_score / max_bm25 if max_bm25 > 0 else 0.0
+            # 归一化BM25得分 (压缩到 0~1)
+            normalized_bm25 = bm25_score / max_bm25
 
-            # 从配置获取权重
-            bm25_weight = getattr(config, 'BM25_WEIGHT', 0.5)
-            vector_weight = getattr(config, 'VECTOR_WEIGHT', 0.5)
-
-            # 使用归一化后的BM25得分计算加权得分
+            # 计算真正的加权得分
             weighted_bm25 = normalized_bm25 * bm25_weight
             weighted_vector = vector_score * vector_weight
+            weighted_sum = weighted_bm25 + weighted_vector
 
             result['bm25_weight'] = bm25_weight
             result['vector_weight'] = vector_weight
             result['bm25_score_normalized'] = normalized_bm25
             result['weighted_bm25'] = weighted_bm25
             result['weighted_vector'] = weighted_vector
-            result['weighted_sum'] = weighted_bm25 + weighted_vector
 
-            # 注意：Elasticsearch的最终得分可能不是简单的加权和
-            # 因为它会做归一化和其他处理
-            result['es_final_score'] = result.get('hybrid_score', 0.0)
+            # 【修复张冠李戴】：将真实算对的分数保存为 hybrid_score，以便外部统一打印
+            result['weighted_sum'] = weighted_sum
+            result['es_final_score'] = result.get('hybrid_score', 0.0)  # 把 ES 瞎算的原始分备份一下
+            result['hybrid_score'] = weighted_sum  # 覆盖旧分数！
+
+        # ==================== 4. 核心修复：根据新分数重新排序并截取 ====================
+        # 必须要 sort，否则依然是按照 ES 瞎算的顺序返回
+        hybrid_results.sort(key=lambda x: x['hybrid_score'], reverse=True)
+
+        # 排序完成后，再精准切出用户实际想要的 top_k 个结果
+        final_results = hybrid_results[:top_k]
 
         return {
             'query': query,
-            'detailed_results': hybrid_results,
+            'detailed_results': final_results,
             'bm25_scores': detailed_scores.get('bm25_scores', {}),
             'vector_scores': detailed_scores.get('vector_scores', {}),
             'weights': {
-                'bm25_weight': getattr(config, 'BM25_WEIGHT', 0.5),
-                'vector_weight': getattr(config, 'VECTOR_WEIGHT', 0.5)
+                'bm25_weight': bm25_weight,
+                'vector_weight': vector_weight
             }
         }

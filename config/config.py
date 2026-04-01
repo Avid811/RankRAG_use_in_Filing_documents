@@ -6,7 +6,7 @@ from dataclasses import dataclass
 @dataclass
 class Config:
     # Elasticsearch 配置
-    ES_HOST = "127.0.0.1"  # 服务器IP
+    ES_HOST = "192.168.1.103"  # 服务器IP
     ES_PORT = 9200
     ES_USERNAME = "elastic"  # 默认用户名
     ES_PASSWORD = os.getenv("ES_PASSWORD", "")  # 从环境变量读取密码
@@ -22,11 +22,11 @@ class Config:
     CHUNK_OVERLAP = 50
 
     # 模型配置
-    EMBEDDING_MODEL = "text-embedding-v4"
+    EMBEDDING_MODEL = "text-embedding-v3"
 
     # 混合检索权重
-    BM25_WEIGHT = 0.4
-    VECTOR_WEIGHT = 0.6
+    BM25_WEIGHT = 0.3
+    VECTOR_WEIGHT = 0.7
 
     # 连接配置
     ES_REQUEST_TIMEOUT = 30
