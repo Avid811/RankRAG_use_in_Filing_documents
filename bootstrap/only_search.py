@@ -1,3 +1,4 @@
+from config.config import config
 from tools.retriever.hybrid_retriever import HybridRetriever
 
 
@@ -34,7 +35,7 @@ def simplified_rag_test():
                 # ================= 展示各项分数的推导过程 =================
                 print(f"BM25 原始分:     {raw_bm25:.4f} (按比例压缩为: {norm_bm25:.4f})")
                 print(f"向量 检索得分:   {vector_score:.4f}")
-                print(f"最终 混合得分:   {hybrid_score:.4f}  (计算公式: {norm_bm25:.4f}*0.4 + {vector_score:.4f}*0.6)")
+                print(f"最终 混合得分:   {hybrid_score:.4f}  (计算公式: {norm_bm25:.4f}*{config.BM25_WEIGHT} + {vector_score:.4f}*{config.VECTOR_WEIGHT})")
                 print("-" * 20)
         else:
             print("未找到相关结果")
