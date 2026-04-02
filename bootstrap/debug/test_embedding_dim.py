@@ -1,4 +1,4 @@
-from tools.processor.get_embeddings import get_embedding_func
+from tools.LLMs.get_embeddings import get_embedding_func
 
 # 测试向量生成
 test_query = "网络暴力"

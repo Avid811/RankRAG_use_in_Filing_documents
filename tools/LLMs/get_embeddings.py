@@ -8,7 +8,7 @@ from config.config import config
 
 load_dotenv()
 
-api_key = os.getenv("DASHSCOPE_API_KEY")
+api_key = os.getenv("OPENAI_API_KEY")
 
 
 def get_embedding_func(input_text: Union[str, List[str]]) -> Union[List[float], List[List[float]]]:

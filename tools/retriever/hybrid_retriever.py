@@ -4,11 +4,10 @@ from nltk import word_tokenize
 
 from client.es_client import ElasticsearchClient
 from rank_bm25 import BM25Okapi
-import numpy as np
 import traceback
 
 from config.config import config
-from tools.processor.get_embeddings import get_embedding_func
+from tools.LLMs.get_embeddings import get_embedding_func
 
 
 

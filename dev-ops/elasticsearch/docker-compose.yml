@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   elasticsearch:
-    # 使用 build 而不是 image，从 Dockerfile 构建
+    # 使用 build 而不是 image，从Dockerfile构建
     build:
       context: .
       dockerfile: Dockerfile

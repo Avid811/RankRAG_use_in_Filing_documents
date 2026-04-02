@@ -8,7 +8,7 @@ import fitz  # PyMuPDF
 from docx import Document
 
 from config.config import config
-from tools.processor.get_embeddings import get_embedding_func
+from tools.LLMs.get_embeddings import get_embedding_func
 
 
 
