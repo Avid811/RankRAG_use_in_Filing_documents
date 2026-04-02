@@ -12,7 +12,7 @@ def simplified_rag_test():
 
     try:
         # 执行混合检索获取详细分数
-        detailed_results = retriever.retrieve_with_detailed_scores(query, top_k=20)
+        detailed_results = retriever.retrieve_with_detailed_scores(query, top_k=15)
 
         if detailed_results and detailed_results.get('detailed_results'):
             print("\n检索成功，找到相关结果！")

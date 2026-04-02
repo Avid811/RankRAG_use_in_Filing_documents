@@ -23,6 +23,7 @@ class Config:
 
     # 模型配置
     EMBEDDING_MODEL = "text-embedding-v3"
+    RERANK_MODEL = "qwen3-rerank"
 
     # 混合检索权重
     BM25_WEIGHT = 0.3
