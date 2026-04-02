@@ -1,14 +1,10 @@
 from typing import List, Dict
-
 from nltk import word_tokenize
-
 from client.es_client import ElasticsearchClient
 from rank_bm25 import BM25Okapi
 import traceback
-
 from config.config import config
 from tools.LLMs.get_embeddings import get_embedding_func
-
 
 
 class HybridRetriever:
@@ -150,7 +146,7 @@ class HybridRetriever:
 
         return '\n'.join(formatted)
 
-    def retrieve_with_detailed_scores(self, query: str, top_k: int = 5) -> Dict:
+    def retrieve_with_detailed_scores(self, query: str, top_m: int = 5) -> Dict:
         """
         执行混合检索并返回详细的得分信息
 
