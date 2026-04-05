@@ -8,8 +8,17 @@ import urllib3
 
 from config.config import config
 
+# 配置日志，只显示我们自己的日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 禁用或降低Elasticsearch客户端库的日志级别
+for logger_name in ['elasticsearch', 'elastic_transport']:
+    es_logger = logging.getLogger(logger_name)
+    es_logger.setLevel(logging.WARNING)
+
+# 降低client.es_client的日志级别，减少连接和搜索信息的输出
+logger.setLevel(logging.WARNING)
 
 
 class ElasticsearchClient:

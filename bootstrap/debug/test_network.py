@@ -1,4 +1,5 @@
 # test_network.py
+import os
 import socket
 import requests
 from config.config import config
@@ -62,4 +63,5 @@ def test_connection():
 
 
 if __name__ == "__main__":
-    test_connection()
+    # test_connection()
+    print(os.getenv("DASHSCOPE_API_KEY"))

@@ -80,3 +80,4 @@ db/
 *.gz
 *.7z
 *.rar
+/data/test1.json

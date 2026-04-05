@@ -27,11 +27,11 @@ class HybridRetriever:
         """
         # 生成查询的embedding
         try:
-            print("正在生成向量...")
+            # print("正在生成向量...")
             embeddings = get_embedding_func([query])
 
             if not embeddings or len(embeddings) == 0:
-                print("⚠️ 无法生成向量，将使用全零向量")
+                # print("⚠️ 无法生成向量，将使用全零向量")
                 query_vector = [0.0] * self.embedding_dim
             else:
                 # 处理返回的向量格式
@@ -41,34 +41,34 @@ class HybridRetriever:
                 if hasattr(query_vector, 'tolist'):
                     query_vector = query_vector.tolist()
                 elif not isinstance(query_vector, list):
-                    print(f"⚠️ 向量格式异常: {type(query_vector)}，将使用全零向量")
+                    # print(f"⚠️ 向量格式异常: {type(query_vector)}，将使用全零向量")
                     query_vector = [0.0] * self.embedding_dim
 
                 # 确保维度正确
                 actual_dim = len(query_vector)
                 if actual_dim != self.embedding_dim:
-                    print(f"⚠️ 向量维度不正确: {actual_dim}，期望{self.embedding_dim}")
+                    # print(f"⚠️ 向量维度不正确: {actual_dim}，期望{self.embedding_dim}")
                     if actual_dim > self.embedding_dim:
                         query_vector = query_vector[:self.embedding_dim]
-                        print(f"已截断到{self.embedding_dim}维")
+                        # print(f"已截断到{self.embedding_dim}维")
                     else:
                         query_vector = query_vector + [0.0] * (self.embedding_dim - actual_dim)
-                        print(f"已填充到{self.embedding_dim}维")
+                        # print(f"已填充到{self.embedding_dim}维")
 
-                print(f"✅ 向量生成成功，维度: {len(query_vector)}")
+                # print(f"✅ 向量生成成功，维度: {len(query_vector)}")
 
         except Exception as e:
-            print(f"❌ 生成向量时出错: {e}")
-            traceback.print_exc()
+            # print(f"❌ 生成向量时出错: {e}")
+            # traceback.print_exc()
             query_vector = [0.0] * self.embedding_dim
 
         if use_hybrid:
             # 使用混合检索
-            print("🔍 执行混合检索...")
+            # print("🔍 执行混合检索...")
             results = self.es_client.hybrid_search(query, query_vector, top_k)
         else:
             # 仅使用向量检索
-            print("🔍 执行纯向量检索...")
+            # print("🔍 执行纯向量检索...")
             results = self.es_client.pure_vector_search(query_vector, top_k)
 
         return results
@@ -155,41 +155,41 @@ class HybridRetriever:
         """
         # ==================== 1. 向量生成部分 (保持原样不变) ====================
         try:
-            print("正在生成向量...")
+            # print("正在生成向量...")
             embeddings = get_embedding_func([query])
 
             if not embeddings or len(embeddings) == 0:
-                print("无法生成向量，将使用全零向量")
+                # print("无法生成向量，将使用全零向量")
                 query_vector = [0.0] * self.embedding_dim
             else:
                 query_vector = embeddings[0] if isinstance(embeddings, list) else embeddings
                 if hasattr(query_vector, 'tolist'):
                     query_vector = query_vector.tolist()
                 elif not isinstance(query_vector, list):
-                    print(f"向量格式异常: {type(query_vector)}，将使用全零向量")
+                    # print(f"向量格式异常: {type(query_vector)}，将使用全零向量")
                     query_vector = [0.0] * self.embedding_dim
 
                 actual_dim = len(query_vector)
                 if actual_dim != self.embedding_dim:
-                    print(f"向量维度不正确: {actual_dim}，期望{self.embedding_dim}")
+                    # print(f"向量维度不正确: {actual_dim}，期望{self.embedding_dim}")
                     if actual_dim > self.embedding_dim:
                         query_vector = query_vector[:self.embedding_dim]
                     else:
                         query_vector = query_vector + [0.0] * (self.embedding_dim - actual_dim)
 
-            print(f"向量生成成功，维度: {len(query_vector)}")
+            # print(f"向量生成成功，维度: {len(query_vector)}")
 
         except Exception as e:
-            print(f"生成向量时出错: {e}")
-            traceback.print_exc()
+            # print(f"生成向量时出错: {e}")
+            # traceback.print_exc()
             query_vector = [0.0] * self.embedding_dim
 
         # ==================== 2. 核心修复：获取更大的候选池 ====================
-        # 必须放大召回数量 (例如 top_k 的 5 倍)，防止好文档在第一轮被 ES 错误的算分机制淘汰
-        recall_size = top_k * 5
-        print(f"执行混合检索（从底层捞取 {recall_size} 个候选文档进行精准打分重排）...")
+        # 必须放大召回数量 (例如 top_m 的 5 倍)，防止好文档在第一轮被 ES 错误的算分机制淘汰
+        recall_size = top_m * 5
+        # print(f"执行混合检索（从底层捞取 {recall_size} 个候选文档进行精准打分重排）...")
 
-        # 这里的 top_k 参数传入放大后的 recall_size
+        # 这里的 top_m 参数传入放大后的 recall_size
         detailed_scores = self.es_client.get_separate_scores(query, query_vector, top_k=recall_size)
         hybrid_results = detailed_scores.get('hybrid_results', [])
 
@@ -229,7 +229,7 @@ class HybridRetriever:
         hybrid_results.sort(key=lambda x: x['hybrid_score'], reverse=True)
 
         # 排序完成后，再精准切出用户实际想要的 top_k 个结果
-        final_results = hybrid_results[:top_k]
+        final_results = hybrid_results[:top_m]
 
         return {
             'query': query,
