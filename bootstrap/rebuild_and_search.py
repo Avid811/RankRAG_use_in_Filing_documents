@@ -13,7 +13,7 @@ def simplified_rag_test():
     retriever = HybridRetriever()
 
     # 2. 读取已经准备好的、带向量和完整metadata的JSON文件
-    data_dir = r"/data/source_data/processed_chunks.json"
+    data_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\source_data\processed_chunks.json"
 
     print("\n1. 正在读取并初始化知识库...")
     if not os.path.exists(data_dir):

@@ -6,7 +6,12 @@ from tools.retriever.hybrid_retriever import HybridRetriever
 def simplified_rag_test():
     """简化版RAG测试：复用已有知识库进行检索"""
     # 修改查询词，测试你的法律类数据
-    query = "个人信息可能在境外被访问"
+    query = """
+    安全措施要求  
+对服务提供者的要求如下。  
+a）服务适用人群、场合、用途方面：  
+2）服务用于关键信息基础设施，以及如自动控制、医疗信息服务、心理咨询、金融信息服务等重要场合的，应具备与风险程度以及场景相适应的安全保护措施；
+    """
     print(f"查询: {query}")
     print("-" * 30)
     retriever = HybridRetriever()

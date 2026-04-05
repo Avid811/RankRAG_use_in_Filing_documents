@@ -41,7 +41,11 @@ def get_single_chunk_result(chunk:str ,):
     rerank_prompt = topm_template.render(rerank_data)
 
     top_k = text_rerank(list_top_m,rerank_prompt,10)
-    top_k_content = [item['document']['text'] for item in top_k]
+    if top_k:
+        top_k_content = [item['document']['text'] for item in top_k]
+    else:
+        # 如果rerank失败，使用原始的top_m作为top_k
+        top_k_content = list_top_m[:10]
 
     # 拼接topk作为prompt 给chat model输出 ①触犯条目 & 阴阳性 ②整体回复
     chat_template = get_jinjia_obj(r'D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\tools\prompts\chat_model.j2')
@@ -110,25 +114,50 @@ def process_pdf_file(pdf_path):
     print(f"处理完成：{pdf_name}，结果保存到：{output_file}")
 
 
+def process_single_pdf(pdf_path):
+    """单独处理一个PDF文件
+    
+    Args:
+        pdf_path: PDF文件的绝对路径
+    """
+    if not os.path.exists(pdf_path):
+        print(f"错误：文件不存在：{pdf_path}")
+        return
+    
+    if not pdf_path.lower().endswith('.pdf'):
+        print(f"错误：不是PDF文件：{pdf_path}")
+        return
+    
+    print(f"开始处理单个PDF文件：{os.path.basename(pdf_path)}")
+    process_pdf_file(pdf_path)
+    print("单个PDF文件处理完成！")
+
+
 if __name__ == "__main__":
-    input_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\input_data"
+    # # 选项1：处理目录下所有PDF文件
+    # input_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\input_data"
     
-    # 获取所有PDF文件
-    pdf_files = [file_name for file_name in os.listdir(input_dir) if file_name.lower().endswith('.pdf')]
-    total_pdfs = len(pdf_files)
+    # # 获取所有PDF文件
+    # pdf_files = [file_name for file_name in os.listdir(input_dir) if file_name.lower().endswith('.pdf')]
+    # total_pdfs = len(pdf_files)
     
-    print(f"发现{total_pdfs}个PDF文件待处理")
+    # print(f"发现{total_pdfs}个PDF文件待处理")
     
-    # 遍历目录下的所有PDF文件
-    if tqdm:
-        for i, file_name in enumerate(tqdm(pdf_files, desc="处理PDF文件", unit="file")):
-            pdf_path = os.path.join(input_dir, file_name)
-            print(f"\n开始处理第{i+1}/{total_pdfs}个文件: {file_name}")
-            process_pdf_file(pdf_path)
-    else:
-        for i, file_name in enumerate(pdf_files):
-            pdf_path = os.path.join(input_dir, file_name)
-            print(f"\n处理第{i+1}/{total_pdfs}个文件: {file_name}")
-            process_pdf_file(pdf_path)
+    # # 遍历目录下的所有PDF文件
+    # if tqdm:
+    #     for i, file_name in enumerate(tqdm(pdf_files, desc="处理PDF文件", unit="file")):
+    #         pdf_path = os.path.join(input_dir, file_name)
+    #         print(f"\n开始处理第{i+1}/{total_pdfs}个文件: {file_name}")
+    #         process_pdf_file(pdf_path)
+    # else:
+    #     for i, file_name in enumerate(pdf_files):
+    #         pdf_path = os.path.join(input_dir, file_name)
+    #         print(f"\n处理第{i+1}/{total_pdfs}个文件: {file_name}")
+    #         process_pdf_file(pdf_path)
     
-    print("\n所有PDF文件处理完成！")
+    # print("\n所有PDF文件处理完成！")
+    
+    # 选项2：单独处理一个PDF文件（示例）
+    # 取消下面的注释并修改为实际的PDF文件路径
+    single_pdf_path = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\input_data\多模态大模型的训练方法及相关装置.pdf"
+    process_single_pdf(single_pdf_path)

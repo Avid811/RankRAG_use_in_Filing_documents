@@ -44,20 +44,48 @@ from http import HTTPStatus
 from config.config import config
 
 
+import time
+import random
+import requests
+
 def text_rerank(input_documents: List[str], prompt: str ,top_k):
-    resp = dashscope.TextReRank.call(
-        api_key=os.getenv("DASHSCOPE_API_KEY"),
-        model=config.RERANK_MODEL,
-        query=prompt,
-        documents=input_documents,
-        top_n=top_k,
-        return_documents=True
-    )
-    if resp.status_code == HTTPStatus.OK:
-        return resp.output.results
-    else:
-        print(resp)
-        return None
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            resp = dashscope.TextReRank.call(
+                api_key=os.getenv("DASHSCOPE_API_KEY"),
+                model=config.RERANK_MODEL,
+                query=prompt,
+                documents=input_documents,
+                top_n=top_k,
+                return_documents=True
+            )
+            if resp.status_code == HTTPStatus.OK:
+                return resp.output.results
+            else:
+                print(resp)
+                if attempt < max_retries - 1:
+                    print(f"重试中... ({attempt + 1}/{max_retries})")
+                    time.sleep(2 + random.random() * 3)  # 随机延迟2-5秒
+                    continue
+                else:
+                    return None
+        except (requests.exceptions.RequestException, ConnectionResetError, TimeoutError) as e:
+            print(f"网络错误：{e}")
+            if attempt < max_retries - 1:
+                print(f"重试中... ({attempt + 1}/{max_retries})")
+                time.sleep(2 + random.random() * 3)  # 随机延迟2-5秒
+                continue
+            else:
+                return None
+        except Exception as e:
+            print(f"未知错误：{e}")
+            if attempt < max_retries - 1:
+                print(f"重试中... ({attempt + 1}/{max_retries})")
+                time.sleep(2 + random.random() * 3)  # 随机延迟2-5秒
+                continue
+            else:
+                return None
 
 
 if __name__ == "__main__":
