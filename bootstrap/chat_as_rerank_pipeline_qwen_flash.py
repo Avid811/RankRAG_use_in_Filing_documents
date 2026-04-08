@@ -8,8 +8,8 @@
 
 import os
 import json
+
 from tools.LLMs.chat_models import chat
-from tools.LLMs.rerank_model import text_rerank
 from tools.prompts.jinjia_obj_factory import get_jinjia_obj
 from tools.retriever.hybrid_retriever import HybridRetriever
 from tools.processor.doc_to_chunk_by_recursion import PatentChunker
@@ -24,28 +24,53 @@ except ImportError:
 
 
 # 先写一个方法，传入的是单个chunk文档
-def get_single_chunk_result(chunk:str ,):
+def get_single_chunk_result(chunk:str ,top_k:int = 10):
 
     # 先检索topm
     retriever = HybridRetriever()
     top_m = retriever.retrieve_with_detailed_scores(chunk , 20).get('detailed_results')
 
-    # 对topm，改变格式为List[str]调用rerank模型
+    # 对topm，改变格式为List[str]并创建map
     list_top_m = [item['content'] for item in top_m]
-
-    # 拼接topm与query（原文）作为prompt 传入rerank模型，获取topk
-    topm_template = get_jinjia_obj(r'D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\tools\prompts\rerank_model.j2')
-    rerank_data = {
+    
+    # 拼接topm与query（原文）作为prompt 传入chat_as_rerank模型，获取topk索引
+    chat_rerank_template = get_jinjia_obj(r'D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\tools\prompts\chat_as_rerank.j2')
+    chat_rerank_data = {
         'top_m':list_top_m,
-        'part_article_content':chunk
+        'part_article_content':chunk,
+        'top_k':top_k
     }
-    rerank_prompt = topm_template.render(rerank_data)
+    chat_rerank_prompt = chat_rerank_template.render(chat_rerank_data)
 
-    top_k = text_rerank(list_top_m,rerank_prompt,10)
-    if top_k:
-        top_k_content = [item['document']['text'] for item in top_k]
-    else:
-        # 如果rerank失败，使用原始的top_m作为top_k
+    # 调用chat模型进行重排序
+    rerank_result = chat('qwen3.5-flash', chat_rerank_prompt, asRerank=True)
+
+    
+    # 解析chat模型输出的索引列表
+    try:
+        # 提取方括号内的内容并转换为列表
+        import re
+        match = re.search(r'\[(.*?)\]', rerank_result)
+        if match:
+            index_str = match.group(1)
+            # 处理可能的空格和换行
+            index_str = index_str.replace('\n', '').replace(' ', '')
+            # 转换为整数列表
+            ranked_indices = [int(idx) for idx in index_str.split(',') if idx.strip()]
+            # 确保索引在有效范围内
+            ranked_indices = [idx for idx in ranked_indices if 0 <= idx < len(list_top_m)]
+            # 取前10个
+            ranked_indices = ranked_indices[:10]
+            # 根据索引获取排序后的top_k内容
+            top_k_content = [list_top_m[idx] for idx in ranked_indices]
+
+
+        else:
+            # 如果解析失败，使用原始的top_m作为top_k
+            top_k_content = list_top_m[:10]
+    except Exception as e:
+        print(f"解析重排序结果失败: {e}")
+        # 如果解析失败，使用原始的top_m作为top_k
         top_k_content = list_top_m[:10]
 
     # 拼接topk作为prompt 给chat model输出 ①触犯条目 & 阴阳性 ②整体回复
@@ -56,7 +81,7 @@ def get_single_chunk_result(chunk:str ,):
     }
     chat_prompt = chat_template.render(chat_data)
 
-    return chat('qwen-plus',chat_prompt,asRerank=False)
+    return chat('qwen3.5-flash',chat_prompt,asRerank=False)
 
 
 def process_pdf_file(pdf_path):
@@ -132,9 +157,9 @@ def process_pdf_file(pdf_path):
         print()  # 换行
     
     # 保存单个PDF的结果
-    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\normal_rerank_pipeline"
+    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\chatAsReRank_pipeline"
     if not os.path.exists(result_dir):
-        os.makedirs(result_dir)
+        os.makedirs(result_dir, exist_ok=True)
     
     output_file = os.path.join(result_dir, f"{os.path.splitext(pdf_name)[0]}.json")
     with open(output_file, "w", encoding="utf-8") as f:
@@ -209,9 +234,9 @@ if __name__ == "__main__":
             all_results.extend(pdf_results)
     
     # 保存合并后的结果
-    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\normal_rerank_pipeline"
+    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\chatAsReRank_pipeline_qwen_flash"
     if not os.path.exists(result_dir):
-        os.makedirs(result_dir)
+        os.makedirs(result_dir, exist_ok=True)
     
     output_file = os.path.join(result_dir, "merged_results.json")
     with open(output_file, "w", encoding="utf-8") as f:

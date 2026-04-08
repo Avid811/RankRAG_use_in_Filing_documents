@@ -35,12 +35,22 @@ import json
 import os
 import time
 import random
-from dashscope import Generation
+import re
 import dashscope
-import requests
 
 
-def chat(model, prompt) -> str:
+def chat(model, prompt, asRerank=False) -> str:
+    """
+    调用qwen系列chat模型
+    
+    Args:
+        model: 模型名称，如 'qwen3-max', 'qwen3.6-plus', 'qwen3.5-flash'
+        prompt: 提示词
+        asRerank: 是否为重排序模式，True时会进行JSON格式检查和兜底处理
+    
+    Returns:
+        str: 模型返回的内容
+    """
     messages = [
         {"role": "system", "content": "你是一个专业的法律顾问"},
         {"role": "user", "content": prompt},
@@ -49,42 +59,94 @@ def chat(model, prompt) -> str:
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            response = Generation.call(
-                api_key=os.getenv("DASHSCOPE_API_KEY"),
-                # Qwen3.5系列需要使用多模态接口，直接替换模型会导致报错
-                model=model,
-                messages=messages,
-                result_format="message",
-            )
-
+            # 根据模型名称选择不同的调用方法
+            if model in ['qwen3.6-plus', 'qwen3.5-flash']:
+                # qwen3.6-plus 和 qwen3.5-flash 使用 MultiModalConversation
+                response = dashscope.MultiModalConversation.call(
+                    api_key=os.getenv('DASHSCOPE_API_KEY'),
+                    model=model,
+                    messages=messages,
+                    result_format='message'
+                )
+            elif model == 'qwen3-max':
+                # qwen3-max 使用 Generation
+                response = dashscope.Generation.call(
+                    api_key=os.getenv('DASHSCOPE_API_KEY'),
+                    model=model,
+                    messages=messages,
+                    result_format='message'
+                )
+            else:
+                # 默认使用 Generation
+                response = dashscope.Generation.call(
+                    api_key=os.getenv('DASHSCOPE_API_KEY'),
+                    model=model,
+                    messages=messages,
+                    result_format='message'
+                )
+            
+            # 检查响应状态
             if response.status_code == 200:
-                return response.output.choices[0].message.content
-                # 如需查看完整响应，取消下列注释
-                # print(json.dumps(response, default=lambda o: o.__dict__, indent=4))
+                content = response.output.choices[0].message.content
+                
+                # 如果不是asRerank模式，直接返回结果
+                if not asRerank:
+                    return content
+                
+                # asRerank模式：检查是否为有效的JSON格式
+                try:
+                    # 尝试解析JSON
+                    json.loads(content)
+                    return content
+                except json.JSONDecodeError:
+                    # 兜底机制：使用正则表达式提取信息
+                    print("警告：返回结果不是有效JSON，使用兜底机制处理")
+                    # 提取文段
+                    text_match = re.search(r'"文段":\s*"([^"]+)"', content)
+                    text = text_match.group(1) if text_match else ""
+                    
+                    # 提取违规记录
+                    violations = []
+                    # 匹配违规记录块
+                    violation_pattern = re.compile(r'"违规记录":\s*\[(.*?)\]', re.DOTALL)
+                    violation_match = violation_pattern.search(content)
+                    if violation_match:
+                        violation_content = violation_match.group(1)
+                        # 匹配每个违规条目
+                        item_pattern = re.compile(r'\{[^\}]*"法律法规":\s*"([^"]+)",[^\}]*"违规原因":\s*"([^"]+)",[^\}]*"程度":\s*"([^"]+)"[^\}]*\}', re.DOTALL)
+                        for match in item_pattern.finditer(violation_content):
+                            law, reason, level = match.groups()
+                            violations.append({
+                                "法律法规": law,
+                                "违规原因": reason,
+                                "程度": level
+                            })
+                    
+                    # 构建标准JSON格式
+                    if violations:
+                        standard_json = [{
+                            "文段": text,
+                            "违规记录": violations
+                        }]
+                        return json.dumps(standard_json, ensure_ascii=False)
+                    else:
+                        return "当前chunk未触犯任何法律法规"
             else:
                 print(f"HTTP返回码：{response.status_code}")
                 print(f"错误码：{response.code}")
                 print(f"错误信息：{response.message}")
-                print("请参考文档：https://help.aliyun.com/zh/model-studio/developer-reference/error-code")
                 if attempt < max_retries - 1:
                     print(f"重试中... ({attempt + 1}/{max_retries})")
-                    time.sleep(2 + random.random() * 3)  # 随机延迟2-5秒
+                    time.sleep(2 + random.random() * 3)
                     continue
                 else:
                     return "当前chunk未触犯任何法律法规"
-        except (requests.exceptions.RequestException, ConnectionResetError, TimeoutError) as e:
-            print(f"网络错误：{e}")
-            if attempt < max_retries - 1:
-                print(f"重试中... ({attempt + 1}/{max_retries})")
-                time.sleep(2 + random.random() * 3)  # 随机延迟2-5秒
-                continue
-            else:
-                return "当前chunk未触犯任何法律法规"
+                    
         except Exception as e:
-            print(f"未知错误：{e}")
+            print(f"错误：{e}")
             if attempt < max_retries - 1:
                 print(f"重试中... ({attempt + 1}/{max_retries})")
-                time.sleep(2 + random.random() * 3)  # 随机延迟2-5秒
+                time.sleep(2 + random.random() * 3)
                 continue
             else:
                 return "当前chunk未触犯任何法律法规"

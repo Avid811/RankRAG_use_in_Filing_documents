@@ -1,15 +1,6 @@
-"""
-这段代码用于全流程
- input： 待审查文档
- result： 文档是否合规的报告：①触犯条目 & 阴阳性 ②整体回复
-"""
-
-
-
 import os
 import json
 from tools.LLMs.chat_models import chat
-from tools.LLMs.rerank_model import text_rerank
 from tools.prompts.jinjia_obj_factory import get_jinjia_obj
 from tools.retriever.hybrid_retriever import HybridRetriever
 from tools.processor.doc_to_chunk_by_recursion import PatentChunker
@@ -23,30 +14,16 @@ except ImportError:
     tqdm = None
 
 
+
 # 先写一个方法，传入的是单个chunk文档
 def get_single_chunk_result(chunk:str ,):
 
-    # 先检索topm
+    # 先检索top 10
     retriever = HybridRetriever()
-    top_m = retriever.retrieve_with_detailed_scores(chunk , 20).get('detailed_results')
+    top_m = retriever.retrieve_with_detailed_scores(chunk , 10).get('detailed_results')
 
-    # 对topm，改变格式为List[str]调用rerank模型
-    list_top_m = [item['content'] for item in top_m]
-
-    # 拼接topm与query（原文）作为prompt 传入rerank模型，获取topk
-    topm_template = get_jinjia_obj(r'D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\tools\prompts\rerank_model.j2')
-    rerank_data = {
-        'top_m':list_top_m,
-        'part_article_content':chunk
-    }
-    rerank_prompt = topm_template.render(rerank_data)
-
-    top_k = text_rerank(list_top_m,rerank_prompt,10)
-    if top_k:
-        top_k_content = [item['document']['text'] for item in top_k]
-    else:
-        # 如果rerank失败，使用原始的top_m作为top_k
-        top_k_content = list_top_m[:10]
+    # 对top 10，改变格式为List[str]
+    top_k_content = [item['content'] for item in top_m]
 
     # 拼接topk作为prompt 给chat model输出 ①触犯条目 & 阴阳性 ②整体回复
     chat_template = get_jinjia_obj(r'D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\tools\prompts\chat_model.j2')
@@ -56,7 +33,7 @@ def get_single_chunk_result(chunk:str ,):
     }
     chat_prompt = chat_template.render(chat_data)
 
-    return chat('qwen-plus',chat_prompt,asRerank=False)
+    return chat('qwen3.6-plus',chat_prompt,asRerank=False)
 
 
 def process_pdf_file(pdf_path):
@@ -132,7 +109,7 @@ def process_pdf_file(pdf_path):
         print()  # 换行
     
     # 保存单个PDF的结果
-    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\normal_rerank_pipeline"
+    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\only_search_pipeline"
     if not os.path.exists(result_dir):
         os.makedirs(result_dir)
     
@@ -209,7 +186,7 @@ if __name__ == "__main__":
             all_results.extend(pdf_results)
     
     # 保存合并后的结果
-    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\normal_rerank_pipeline"
+    result_dir = r"D:\WORK\school\BI_YE_ARTICLE\RankRAG_use_in_Filing_documents\data\result\only_search_pipeline"
     if not os.path.exists(result_dir):
         os.makedirs(result_dir)
     
